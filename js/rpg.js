@@ -65,11 +65,12 @@ var player,
     npcs = [];
 
 function preload() {
-    game.load.spritesheet('dude', 'format/rpg/assets/dude.png', 32, 48);
-    game.load.spritesheet('warp', 'format/rpg/assets/diamond.png', 32, 28);
-    game.load.spritesheet('dog', 'format/rpg/assets/baddie.png', 32, 32);
-    game.load.tilemap('map1', 'format/rpg/assets/tilemaps/maps/map1.json', null, Phaser.Tilemap.TILED_JSON);
-    game.load.image('terrain_atlas_image', 'format/rpg/assets/terrain_atlas.png');
+    game.load.baseURL = '';
+    game.load.spritesheet('dude', 'assets/dude.png', 32, 48);
+    game.load.spritesheet('warp', 'assets/diamond.png', 32, 28);
+    game.load.spritesheet('dog', 'assets/baddie.png', 32, 32);
+    game.load.tilemap('map1', 'assets/tilemaps/maps/map1.json', null, Phaser.Tilemap.TILED_JSON);
+    game.load.image('terrain_atlas_image', 'assets/terrain_atlas.png');
 }
 
 function create() {
@@ -94,6 +95,7 @@ function create() {
     sprite.animations.add('right', [5, 6, 7, 8], 10, true);
     sprite.frame = 4;
     player = new Player(sprite);
+    player.jumpToXY(4, 4);
     game.camera.follow(player.sprite);
 
     game.scale.scaleMode = Phaser.ScaleManager.SHOW_ALL;
@@ -165,6 +167,7 @@ function update() {
 
         if (clear) {
             player.moveToXY(layer.getTileX(x), layer.getTileX(y));
+            console.log(pathfinder(player.x, player.y, layer.getTileX(x), layer.getTileY(y), tilemap));
         }
 
         // game.physics.arcade.moveToXY(player, player.dest[0], player.dest[1], 200);
@@ -196,6 +199,7 @@ function Character(sprite) {
     this.origin = {x: this.x, y: this.y};
     this.destination = {x: this.x, y: this.y};
     this.angle = 0;
+    this.waypoints = [];
 }
 Character.prototype.destroy = function() {
     this.sprite.destroy();
@@ -257,7 +261,7 @@ Character.prototype.update = function() {
             this.y = this.destination.y;
             this.stop();
         } else {
-            this.angle = game.physics.arcade.moveToXY(this.sprite, this.destination.x * TILESW, this.destination.y * TILESH, 200);
+            // this.angle = game.physics.arcade.moveToXY(this.sprite, this.destination.x * TILESW, this.destination.y * TILESH, 200);
         }
     }
     game.physics.arcade.collide(this.sprite, layer);
@@ -333,3 +337,133 @@ NPC.prototype.update = function() {
     //     }
     // }
 };
+
+function pathfinder(fromX, fromY, toX, toY, tilemap) {
+    var COSTL = 10,
+        COSTD = 14,
+        opened = {},    // Open tiles and their evaluated costs.
+        tilesG = {},    // Cost of tile from origin.
+        tilesH = {},    // Cost of tile to destination.
+        closed = [],
+        parents = {},
+        tmp;
+
+    if (fromX == toX && fromY == toY) {
+        return false;
+    }
+
+    opened[fromX + ':' + fromY] = (Math.abs(fromX - toX) + Math.abs(fromY - toY)) * COSTL;
+
+    while (Object.keys(opened).length > 0) {
+        var cheapest = null,
+            diagonals,
+            neighbours,
+            keys,
+            currentKey,
+            i,
+            x,
+            y;
+
+        keys = Object.keys(opened);
+        for (i = 0; i < keys.length; i++) {
+            if (cheapest == null || cheapest > opened[keys[i]]) {
+                currentKey = keys[i];
+                cheapest = opened[currentKey];
+                tmp = currentKey.split(':')
+                x = parseInt(tmp[0], 10);
+                y = parseInt(tmp[1], 10);
+            }
+        }
+
+        if (x == toX && y == toY) {
+            break;
+        }
+
+        neighbours = [((x-1) + ':' + (y-1)),(x + ':' + (y-1)),((x+1) + ':' + (y-1)),
+                      ((x-1) + ':' + y),                      ((x+1) + ':' + y),
+                      ((x-1) + ':' + (y+1)),(x + ':' + (y+1)),((x+1) + ':' + (y+1))];
+        diagonals = [((x-1) + ':' + (y-1)),((x+1) + ':' + (y-1)),
+                     ((x-1) + ':' + (y+1)),((x+1) + ':' + (y+1))];
+
+        // Check the neighbouring tiles.
+        for (i = 0; i < neighbours.length; i++) {
+            var key = neighbours[i],
+                costParent,
+                cost,
+                g,
+                h,
+                tile;
+
+            console.log(key);
+
+            if (closed.indexOf(key) != -1) {
+                continue;
+            }
+
+            // Get the tile.
+            tmp = key.split(':')
+            tile = tilemap.getTile(tmp[0], tmp[1]);
+            if (!tile) {
+                console.log(key);
+            } else if (tile.collideUp) {
+                continue;
+            }
+
+            // Get the tile cost.
+            cost = COSTL;
+            if (diagonals.indexOf(key) != -1) {
+                cost = COSTD;
+            }
+
+            // Get the parent cost.
+            costParent = 0
+            if (opened[x + ':' + y]) {
+                costParent = opened[x + ':' + y];
+            }
+
+            // Calculate G.
+            // TODO Account for the tile 'friction'.
+            g = costParent + cost;
+            h = (Math.abs(parseInt(tmp[0], 10) - toX) + Math.abs(parseInt(tmp[1], 10) - toY)) * COSTL
+
+            // Check if the tile already had a value, and if its better.
+            if (tilesG[key] && tilesG[key] < g) {
+                g = tilesG[key];
+            } else {
+                parents[key] = x + ':' + y
+            }
+
+            // Store the G, H and F.
+            tilesG[key] = g;
+            tilesH[key] = h;
+            opened[key] = g + h;
+        }
+
+        closed.push(currentKey);
+        delete opened[currentKey];
+    }
+
+    // Send back the path.
+    var path = [],
+        child;
+    path.push([toX, toY]);
+    child = toX + ':' + toY
+    while (true) {
+    
+        // Parent does not exist?!
+        if (!parents[child]) {
+            return false
+        }
+            
+        // Add parent before child.
+        path.unshift(child);
+        child = parent
+        
+        // We made it!
+        if (child == fromX + ':' + fromY) {
+            break;
+        }
+    }
+
+    return path
+}
